@@ -1,0 +1,40 @@
+# Deployment definition for the watchdog. Deploy it to the STANDBY server only:
+#
+#   prefect --profile dr deploy -n dr-watchdog
+#
+# The `pull` step clones this repository as-is. Fork it (or copy dr_watchdog.py into your own
+# flows repo) and point `repository` at yours, then set `work_pool.name` to the pool your
+# standby worker polls.
+
+name: prefect-cloud-failover
+prefect-version: ">=3.4.14"
+
+pull:
+  - prefect.deployments.steps.git_clone:
+      repository: https://github.com/prefectlabs/prefect-cloud-failover
+      branch: main
+
+deployments:
+  - name: dr-watchdog
+    description: Probes Prefect Cloud every minute; fails time-critical deployments over to this server while Cloud is unavailable.
+    entrypoint: dr_watchdog.py:dr_watchdog
+    tags: [watchdog]          # never tag this one "dr": it would pause itself
+    schedules:
+      - interval: 60
+        active: true
+    parameters:
+      mode: auto
+      cancel_cloud_late_runs_on_restore: true
+    work_pool:
+      name: your-work-pool    # same pool name as in Cloud; created on the standby by `prefect transfer`
+      job_variables:
+        env:
+          DR_TAG: dr
+          DR_TRIP_AFTER: "3"
+          # Option A: pass Cloud credentials through the environment (templated at deploy time
+          # from the machine running `prefect deploy`; the values are stored in the deployment).
+          # CLOUD_API_URL: "{{ $CLOUD_API_URL }}"
+          # CLOUD_API_KEY: "{{ $CLOUD_API_KEY }}"
+          # Option B (preferred): leave these out and store them on the standby server instead:
+          #   prefect --profile dr variable set cloud_api_url https://api.prefect.cloud/api/accounts/<acct>/workspaces/<ws>
+          #   python -c "from prefect.blocks.system import Secret; Secret(value='<key>').save('cloud-api-key')"   # with PREFECT_PROFILE=dr
